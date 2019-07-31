@@ -1,0 +1,373 @@
+# -*- mode: Snakemake -*-
+
+import Bio.SeqIO, pysam, numpy as np
+from collections import defaultdict
+from snakemake.utils import R
+
+####################### All wanted outputs
+rule all_mapping:
+    input:
+        [expand(str(MAPPING_FP/"{genome}"/"{sample}_unfiltered.bam.bai"), genome=GenomeSegments.keys(), sample=Samples.keys()),
+	 expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.unfiltered.gz'), genome=GenomeSegments.keys(), sample=Samples.keys()),
+         expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.snps_q30_dp10.tsv'), genome=GenomeSegments.keys(), sample=Samples.keys()),
+         expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}_{suffix}.tsv'), suffix=['counts'],genome=GenomeSegments.keys(), sample=Samples.keys())
+	]
+
+####################### Build Bowtie2 Index
+def bt2_index_files(genome, idx_fp):
+    fwd = expand('{idx_fp}/{genome}.{index}.bt2',
+                 genome=genome,
+                 idx_fp=idx_fp,
+                 index=range(1,5))
+    rev = expand('{idx_fp}/{genome}.rev.{index}.bt2',
+                 genome=genome,
+                 idx_fp=idx_fp,
+                 index=range(1,3))
+    return fwd + rev
+
+rule _all_bt2_db:
+    input:
+        bt2_index_files('repgenomes', Cfg['mapping']['genomes_fp'])
+
+rule build_genome_index:
+    input:
+        str(Cfg['mapping']['genomes_fp']/'{genome}.fna')
+    output:
+        bt2_index_files('{genome}', Cfg['mapping']['genomes_fp'])
+    threads:
+        Cfg['mapping']['threads']
+    params:
+        idx_fp = str(Cfg['mapping']['genomes_fp']),
+        time_fp = str(Cfg['all']['time_fp'])
+    log:
+        str(Cfg['mapping']['genomes_fp']/'bt2-build-{genome}.log')
+    shell:
+        "{params.time_fp} -v bowtie2-build --threads 16 {params.idx_fp}/{wildcards.genome}.fna {params.idx_fp}/{wildcards.genome} 2> {log}"
+
+####################### Align Reads to Genomes
+rule align_to_genome_unpaired:
+    input:
+        lambda wildcards: bt2_index_files(wildcards.genome, Cfg['mapping']['genomes_fp']),
+        r1 = str(QC_FP/'cleaned'/'{sample}_1.fastq.gz')
+    output:
+        str(MAPPING_FP/'intermediates'/'{genome}'/'{sample}.sam')
+    threads:
+        Cfg['mapping']['threads']
+    params:
+        idx_fp = str(Cfg['mapping']['genomes_fp']/'{genome}'),
+        time_fp = str(Cfg['all']['time_fp'])
+    log:
+        str(MAPPING_FP/'{genome}'/'log'/'{sample}'/'samtools_0_bt2.log')
+    shell:
+        """
+        bowtie2 --very-sensitive --no-unal -x {params.idx_fp} -U {input.r1} -S {output} -p {threads}
+        """
+
+rule samtools_convert:
+    input:
+        str(MAPPING_FP/'intermediates'/'{genome}'/'{sample}.sam')
+    output:
+        str(MAPPING_FP/'{genome}'/'{sample}_unfiltered.bam')
+    threads:
+        Cfg['mapping']['threads']
+    params:
+        bam = str(MAPPING_FP/'intermediates'/'{genome}'/'{sample}.bam'),
+        time_fp = str(Cfg['all']['time_fp'])
+    shell:
+        """
+        samtools view -@ {threads} -b {Cfg[mapping][samtools_opts]} {input} > {params.bam}
+        samtools sort -@ {threads} -o {output} {params.bam}
+        """
+
+rule samtools_index:
+    input:
+        str(MAPPING_FP/'{genome}'/'{sample}_unfiltered.bam')
+    output:
+        str(MAPPING_FP/'{genome}'/'{sample}_unfiltered.bam.bai')
+    log:
+        str(MAPPING_FP/'{genome}'/'log'/'{sample}'/'samtools_3_index.log')
+    shell:
+        """
+        samtools index {input} {output}
+        """
+
+####################### Filter: MIDAS'S Pileup options
+## filter reads/alignments in the BAM alignment files
+def keep_read(aln):
+    ## MIDAS default: discard reads
+    min_mapid = 94.0
+    min_mapq = 20
+    min_reafq = 20
+    min_aln_cov = 0.75
+    align_len = len(aln.query_alignment_sequence)
+    query_len = aln.query_length
+
+    # min pid filter
+    if 100*(align_len-dict(aln.tags)['NM'])/float(align_len) < min_mapid:
+        return False
+    # min read quality filter
+    if np.mean(aln.query_qualities) < min_reafq:
+        return False
+    # min map quality filter
+    if aln.mapping_quality < min_mapq:
+        return False
+    # min aln cov filter
+    if align_len/float(query_len) < min_aln_cov:
+        return False
+    return True
+
+rule filter_bamfile:
+    input:
+       str(MAPPING_FP/'{genome}'/'{sample}_unfiltered.bam'),
+       str(MAPPING_FP/'{genome}'/'{sample}_unfiltered.bam.bai')
+    output:
+       str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.bam')
+    run:
+       bamfile = pysam.AlignmentFile(input[0], "rb")
+       filtered = pysam.AlignmentFile(output[0], "wb", template=bamfile)
+       for aln in bamfile.fetch():
+           if keep_read(aln):
+               filtered.write(aln)
+       filtered.close()
+       bamfile.close()
+
+rule filtered_index:
+    input:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.bam')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.bam.bai')
+    shell:
+        """
+        samtools index {input} {output}
+        """
+
+rule samtools_faidx_genomes:
+    input:
+        genome = str(Cfg['mapping']['genomes_fp']/'{genome}.fna')
+    output:
+        str(Cfg['mapping']['genomes_fp']/'{genome}.fna.fai')
+    shell:
+        """
+        samtools faidx {input.genome}
+        """
+
+rule _all_pileup:
+    input:
+        expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup'), genome=GenomeSegments.keys(), sample=Samples.keys())
+
+
+####################### Variants Calling
+rule run_mpileup:
+    input:
+        bam = str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.bam'),
+        bai = str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.bam.bai'),
+        genome = str(Cfg['mapping']['genomes_fp']/'{genome}.fna'),
+        genomeidx = str(Cfg['mapping']['genomes_fp']/'{genome}.fna.fai')
+    output:
+        pileup = str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup'),
+        stats = str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.stats')
+    params:
+        script_fp = "/mnt/chunyu20TB/sunbeam_hmp_test/midas_mpileup.py"
+    shell:
+        """
+        python {params.script_fp} --reference-genome {input.genome} --bam-file {input.bam} \
+                                --pileup-file {output.pileup} --stats-file {output.stats}
+        """
+
+rule _all_gstats:
+    input:
+        expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}_genome_stats.tsv'),
+                genome=GenomeSegments.keys(), sample = Samples.keys())
+
+
+rule get_genome_stats:
+    input:
+        depth = str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.depth'),
+        genomelen =  str(MAPPING_FP/'filtered'/'{genome}'/'genomes.len')
+    output:
+        gstats = str(MAPPING_FP/'filtered'/'{genome}'/'{sample}_genome_stats.tsv')
+    params:
+        R = "/mnt/chunyu20TB/sunbeam_hmp_test/get_genome_stats.R"
+    shell:
+        "Rscript {params.R} {input.depth} {input.genomelen} {output.gstats}"
+
+
+rule _all_pileup_nomore:
+    input:
+        expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.dp2.long.bi'), genome=GenomeSegments.keys(), sample=Samples.keys())
+
+
+rule get_full_long:
+    input:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.dp2.long')
+    params:
+        R = "/mnt/chunyu20TB/sunbeam_hmp_test/parallel_pileup_long.R",
+        min_dp = 2,
+        allele_freq = 0.01
+    threads:
+        40
+    shell:
+        """
+        N_ROWS=`wc -l < {input[0]}`
+        Rscript {params.R} {input} ${{N_ROWS}} {threads} {output}
+        """
+
+rule get_full_long_bi:
+    input:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.dp2.long.bi')
+    params:
+        R = "/mnt/chunyu20TB/sunbeam_hmp_test/parallel_pileup_long_bi.R",
+        min_dp = 2,
+        allele_freq = 0.01
+    threads:
+        40
+    shell:
+        """
+        N_ROWS=`wc -l < {input[0]}`
+        Rscript {params.R} {input} ${{N_ROWS}} {threads} {output}
+        """
+
+rule raw_keep_biallelic:
+    input:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.bi')
+    params:
+        R = "/mnt/chunyu20TB/sunbeam_hmp_test/pileup_biallelic_raw.R",
+    shell:
+        "Rscript {params.R} {input[0]} {output}"
+
+####################### Only Kept Bi-allelic sites
+rule keep_10dp:
+    input:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.10DP')
+    shell:
+        """
+        awk  '$4 >=10' {input} > {output}
+        """
+
+##### 20190405
+#### filter out species of interests
+SPECIES_IDS = [262041, 259269, 261737, 258080, 261716, 258846, 262278, 
+               253472, 262105, 260943, 260474, 259612, 261271, 262272, 262282, 
+               262258, 262241, 262191, 262313, 259764, 258398, 260788, 261195]
+## special care =>, 261195]
+
+rule all_sites_10DP:
+    input:
+        samples = str(MAPPING_FP/'filtered'/'Ranalysis'/'samples_by_{species}.txt'),
+    output:
+        str(MAPPING_FP/'filtered'/'Ranalysis'/'allsites_siteratio_10_{species}.csv')
+    params:
+        R = "/mnt/chunyu20TB/sunbeam_hmp_test/all_sites_pileup_20190408.R",
+        max_ratio = 10,
+        pileup_fp = str(MAPPING_FP/'filtered'),
+        species_id = "{species}"
+    shell:
+        """
+        Rscript {params.R} {input.samples} {params.species_id} {params.pileup_fp} {output}
+        """
+
+rule all_to_core:
+    input:
+       samples = str(MAPPING_FP/'filtered'/'Ranalysis'/'samples_by_{species}.txt'),
+       allsites = str(MAPPING_FP/'filtered'/'Ranalysis'/'allsites_siteratio_10_{species}.csv')
+    output:
+       str(MAPPING_FP/'filtered'/'Ranalysis'/'coresites_siteratio_10_prev_0.9_{species}.csv')
+    params:
+       prev = 0.55,
+       R = "/mnt/chunyu20TB/sunbeam_hmp_test/all_to_core_20190408.R"
+    shell:
+       "Rscript {params.R} {input.samples} {input.allsites} {output}"
+
+rule core_sites_samples:
+    input:
+       samples = str(MAPPING_FP/'filtered'/'Ranalysis'/'samples_by_{species}.txt'),
+       coresites = str(MAPPING_FP/'filtered'/'Ranalysis'/'coresites_siteratio_10_prev_0.9_{species}.csv') ## 0.55
+    output:
+       pooled_sites_file = str(MAPPING_FP/'filtered'/'Ranalysis'/'pooled_coresites_prev_0.9_{species}.csv'),
+       pooled_bi_snps_file = str(MAPPING_FP/'filtered'/'Ranalysis'/'pooled_coresnps_prev_0.9_{species}.csv'),
+       heatmap_file = str(MAPPING_FP/'filtered'/'Ranalysis'/'heatmap_pooled_coresnps_prev_0.9_{species}.pdf'),
+       heatmap_mat = str(MAPPING_FP/'filtered'/'Ranalysis'/'heatmap_pooled_coresnps_prev_0.9_{species}.tsv')
+    params:
+       analysis_fp = str(MAPPING_FP/'filtered'/'Ranalysis'/'intermediate'),
+       R = "/mnt/chunyu20TB/sunbeam_hmp_test/core_snps_df_20190411.R",
+       species = "{species}"
+    threads: 30
+    shell:
+       "Rscript {params.R} {params.species} {input.samples} {params.analysis_fp} {output.pooled_sites_file} \
+                {output.pooled_bi_snps_file} {output.heatmap_file} {output.heatmap_mat}"
+
+rule _all_0405:
+    input:
+        expand(str(MAPPING_FP/'filtered'/'Ranalysis'/'pooled_coresites_prev_0.9_{species}.csv'), species=SPECIES_IDS)
+
+rule keep_variant_sits:
+    input:
+         str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.10DP')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.10DP.vsites')
+    run:
+        with open(output[0], 'w') as fout:
+            with open(input[0]) as fin:
+                header = next(fin)
+                fout.write(header)
+                for line in fin:
+                    line = line.rstrip('\n').split('\t')
+                    if sum(int(x) > 0 for x in line[4:8]) > 1:
+                        fout.write('\t'.join([str(_) for _ in line])+'\n')
+
+rule keep_biallelic:
+    input:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.10DP.vsites'),
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.stats')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.10DP.vsites.bi')
+    params:
+        #R = "/mnt/chunyu20TB/sunbeam_hmp_test/keep_biallelic_pileup.R",
+        R = "/mnt/chunyu20TB/sunbeam_hmp_test/pileup_biallelic.R",
+        site_ratio = 10,
+        allele_freq = 0.01
+    shell:
+        "Rscript {params.R} {input[0]} {input[1]} {output}"
+
+
+rule extract_depth:
+   input:
+       str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup')
+   output:
+       str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.depth')
+   shell:
+       """
+       cut -f1-4 {input} > {output}
+       """
+
+
+rule _all_pileup_2:
+    input:
+        expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup.depth'), 
+               genome=GenomeSegments.keys(), sample=Samples.keys())
+
+rule _all_len:
+    input:
+        str(MAPPING_FP/'filtered'/'repgenomes'/'genomes.len')
+rule _all_len_16s:
+    input: 
+        str(MAPPING_FP/'filtered'/'rep_freq_16S'/'genomes.len')
+
+rule genome_len:
+    input:
+        str(Cfg['mapping']['genomes_fp']/'{genome}.fna')
+    output:
+        str(MAPPING_FP/'filtered'/'{genome}'/'genomes.len')
+    run:
+        with open(output[0], 'w') as fout:
+            for record in SeqIO.parse(input[0], "fasta"):
+                fout.write('\t'.join( str(r) for r in [record.id, len(record)]) + '\n')
+

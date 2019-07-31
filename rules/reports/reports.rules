@@ -1,0 +1,46 @@
+# -*- mode: Snakemake -*-
+#
+# ReportGeneration rules
+
+import pandas
+
+from collections import OrderedDict
+from sunbeamlib import reports
+
+rule all_reports:
+    input:
+        TARGET_REPORT
+
+
+rule preprocess_report:
+    """Combines the information from multiple preprocessing steps"""
+    input:
+        trim_files = expand(
+            str(QC_FP/'log'/'trimmomatic'/'{sample}.out'),
+            sample=sorted(Samples.keys())),
+        decontam_files = expand(
+            str(QC_FP/'log'/'decontam'/'{sample}_1.txt'),
+            sample=sorted(Samples.keys()))
+    output:
+        str(QC_FP/'reports'/'preprocess_summary.tsv')
+    run:
+        paired_end = Cfg['all']['paired_end']
+        summary_list = [
+            reports.summarize_qual_decontam(q, d, paired_end) for q, d in 
+            zip(input.trim_files, input.decontam_files)]
+        _reports = pandas.concat(summary_list)
+        _reports.to_csv(output[0], sep='\t', index_label='Samples')
+
+
+rule fastqc_report:
+    """ make fastqc reports """
+    input:
+        files = expand(
+            str(QC_FP/'reports'/'{sample}_{rp}_fastqc/fastqc_data.txt'),
+            sample=Samples.keys(),rp=Pairs)
+    output:
+        str(QC_FP/'reports'/'fastqc_quality.tsv')
+    run:
+        quality_list = [reports.parse_fastqc_quality(file) for file in input.files]
+        quality_table = pandas.concat(quality_list, axis=1).transpose()
+        quality_table.to_csv(output[0],sep="\t",index_label="Samples")

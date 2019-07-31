@@ -1,0 +1,129 @@
+from shutil import copyfile
+from pathlib import Path
+
+import glob
+import subprocess
+
+from snakemake.utils import R
+
+IDs, = glob_wildcards(str(Cfg['all']['root']/'split_R1'/'samples_{id}'))
+
+
+# split -l 40 samples.csv split_R1/samples_
+
+rule _all_gtpro_cmd:
+    input:
+         expand(str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro.run.sh'), id=IDs)
+
+rule new_cmd:
+    input:
+        str(Cfg['all']['root']/'split_R1'/'samples_{id}'),
+        sckdb = Cfg['sbx_gtpro']['sckdb_fp'],
+        gtpro_fp = str(Cfg['sbx_gtpro']['gtpro_fp']/'gt_pro')
+    output:
+        str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro.run.sh')
+    params:
+        prefix = str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro'),
+        time_fp = str(Cfg['all']['time_fp']),
+        qc_fp = str(QC_FP/'cleaned')
+    threads:
+        Cfg['sbx_gtpro']['threads']
+    log:
+        str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro.log')
+    run:
+        args = []
+        with open(input[0]) as f:
+            reader = csv.DictReader(f, fieldnames=['sample', '1', '2'])
+            for row in reader:
+                r1 = '<(gzip -dc ' + params.qc_fp + '/' + row['sample'] + '_1.fastq.gz)'
+                args.append(r1)
+
+        cmd_pre = params.time_fp + ' -v ' + input.gtpro_fp + ' -d ' + input.sckdb + ' -t ' + str(threads) + ' -o ' + params.prefix
+        cmd_post = ' 2> ' + str(log)
+
+        cmd_all = cmd_pre + ' ' +' '.join(args) + cmd_post
+        with open(output[0], 'w') as f:
+            f.write(cmd_all + '\n')
+
+rule _all_raw_gtpro:
+    input:
+        expand(str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro.done'), id=IDs)
+
+rule run_gtpro:
+    input:
+        str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro.run.sh')
+    output:
+        str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro.done')
+    threads:
+        Cfg['sbx_gtpro']['threads']
+    shell:
+        """
+        set +o pipefail
+        bash {input}
+        touch {output}
+        """
+
+rule _all_rename_gtpro:
+    input:
+        expand(str(CLASSIFY_FP/'gtpro-r1'/'snps'/'{id}.done'), id=IDs)
+
+rule rename_gtpro:
+    input:
+        flag = str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro.done'),
+        samples = str(Cfg['all']['root']/'split_R1'/'samples_{id}')
+    output:
+        str(CLASSIFY_FP/'gtpro-r1'/'snps'/'{id}.done')
+    params:
+        rawdir = str(CLASSIFY_FP/'gtpro-r1'/'raw'/'{id}'/'gtpro'),
+        outdir = str(CLASSIFY_FP/'gtpro-r1'/'snps')
+    run:
+        samples = []
+        with open(input.samples) as f:
+            reader = csv.DictReader(f, fieldnames=['sample', '1', '2'])
+            for row in reader:
+                samples.append(row['sample'])
+        for idx in range(0, len(samples), 1):
+            raw_name1 = params.rawdir + '.' + str(idx) + '.tsv'
+            new_name1 = params.outdir + '/' + samples[idx] + '_1.tsv'
+            if Path(raw_name1).is_file():
+                copyfile(raw_name1, new_name1)
+                print(raw_name1, new_name1)
+        subprocess.call(["touch", output[0]])
+
+rule _all_parse_gtpro:
+    input:
+        expand(str(CLASSIFY_FP/'gtpro-r1'/'parse'/'{sample}_1.tsv'), sample = Samples.keys())
+
+rule parse_gtpro:
+    input:
+        r1 = str(CLASSIFY_FP/'gtpro-r1'/'snps'/'{sample}_1.tsv')
+    output:
+        r1 = str(CLASSIFY_FP/'gtpro-r1'/'parse'/'{sample}_1.tsv')
+    params:
+        snp_dict = Cfg['sbx_gtpro']['snpdict_fp'],
+        parse_fp = str(Cfg['sbx_gtpro']['gtpro_fp']/'scripts'/'gtp_parse.py')
+    shell:
+        """
+        python3 {params.parse_fp} --dict {params.snp_dict} --in {input.r1} --v2 > {output.r1}
+        """
+
+rule _all_ps_gp_plot:
+     input:
+        expand(str(CLASSIFY_FP/'gtpro-r1'/'ps_gp_plot'/'{sample}_gp.tsv'), sample = Samples.keys())
+
+rule ps_gtpro_pileup_plot:
+     input:
+        gtpro = str(CLASSIFY_FP/'gtpro-r1'/'parse'/'{sample}_1.tsv')
+     output:
+        outfile = str(CLASSIFY_FP/'gtpro-r1'/'ps_gp_plot'/'{sample}_gp.tsv'),
+        pdf = str(CLASSIFY_FP/'gtpro-r1'/'ps_gp_plot'/'{sample}_gp.pdf'),
+        stats = str(CLASSIFY_FP/'gtpro-r1'/'ps_gp_plot'/'{sample}_stats.csv'),
+        corr = str(CLASSIFY_FP/'gtpro-r1'/'ps_gp_plot'/'{sample}_bygenome_corr.csv'),
+        jc = str(CLASSIFY_FP/'gtpro-r1'/'ps_gp_plot'/'{sample}_bygenome_jc.csv')
+     params:
+        sample = "{sample}",
+        project_dir = str(Cfg['all']['output_fp']),
+        R = "/mnt/chunyu20TB/sunbeam_hmp_test/ps_gtpro_pileup_plot.R"
+     threads: 2
+     shell:
+        "Rscript {params.R} {params.sample} {params.project_dir} {output.pdf} {output.outfile} {output.stats} {output.corr} {output.jc}"

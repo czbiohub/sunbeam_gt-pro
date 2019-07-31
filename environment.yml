@@ -1,0 +1,28 @@
+channels:
+  - bioconda
+  - conda-forge
+  - eclarke
+  - louiejtaylor
+dependencies:
+  - snakemake=4.8.1
+  - ruamel.yaml
+  - biopython
+  - trimmomatic=0.36
+  - fastqc
+  - blast
+  - kraken=1.0
+  - kraken-biom
+  - vsearch
+  - jellyfish=1.1.11=1
+  - cutadapt
+  - bwa>=0.7.17
+  - pysam
+  - pandas
+  - megahit
+  - prodigal
+  - semantic_version
+  - setuptools_scm
+  - komplexity=0.3.6
+  - rust-bio-tools
+  - grabseqs=0.3.4
+  - minimap2
