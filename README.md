@@ -104,7 +104,7 @@ snakemake --configfile HMP/sunbeam_config.yml _all_pileup --cores 48
 
 ```
 cd $HOME/hmp
-split -l 42 <(cat samples.csv) split_R1/samples_
+split -l 48 <(cat samples.csv) split_R1/samples_
 
 snakemake sunbeam_config.yml _all_raw_gtpro --cores 48
 snakemake sunbeam_config.yml _all_rename_gtpro --cores 48
