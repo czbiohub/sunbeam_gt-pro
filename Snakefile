@@ -23,7 +23,6 @@ from sunbeamlib.reports import *
 
 import collections
 
-
 ## 20190502: we don't want to keep extra unnecessary files
 def cz_load_sample_list(samplelist_fp):
   Samples = collections.defaultdict()
@@ -46,6 +45,7 @@ except KeyError:
         "$SUNBEAM_DIR environment variable not defined. Are you sure you're "
         "running this from the Sunbeam conda env?")
 
+sunbeam_dir = "/mnt/chunyu20TB/sunbeam_gt-pro"
 # Load extensions
 sbxs = list(listfiles(sunbeam_dir+"/extensions/{sbx_folder}/{sbx}.rules"))
 for sbx in sbxs:
@@ -54,18 +54,19 @@ for sbx in sbxs:
 # Setting up config files and samples
 Cfg = check_config(config)
 Blastdbs = process_databases(Cfg['blastdbs'])
+print(Blastdbs)
 
 #Samples = load_sample_list(Cfg['all']['samplelist_fp'], Cfg['all']['paired_end'], Cfg['all']['download_reads'], Cfg["all"]['root']/Cfg['all']['output_fp'])
 Samples = cz_load_sample_list(Cfg['all']['samplelist_fp'])
+
 Pairs = ['1', '2'] if Cfg['all']['paired_end'] else ['1']
-#print(Samples)
 
 # Collect host (contaminant) genomes
 sys.stderr.write("Collecting host/contaminant genomes... ")
 if Cfg['qc']['host_fp'] == Cfg['all']['root']:
     HostGenomeFiles = []
 else:
-    HostGenomeFiles = [f for f in Cfg['qc']['host_fp'].glob('*.fna')]
+    HostGenomeFiles = [f for f in Cfg['qc']['host_fp'].glob('*.fasta')] ## fna
     if not HostGenomeFiles:
         sys.stderr.write(
             "\n\nWARNING: No files detected in host genomes folder ({}). "
@@ -88,6 +89,8 @@ sys.stderr.write("done.\n")
 # ---- Change your workdir to output_fp
 workdir: str(Cfg['all']['output_fp'])
 
+print(Blastdbs['nucl'])
+
 # ---- Set up output paths for the various steps
 DOWNLOAD_FP = output_subdir(Cfg, 'download')
 QC_FP = output_subdir(Cfg, 'qc')
@@ -107,8 +110,8 @@ include: "rules/targets/targets.rules"
 
 
 # ---- Quality control rules
-#include: "rules/qc/qc.rules"
-#include: "rules/qc/decontaminate.rules"
+include: "rules/qc/qc.rules"
+include: "rules/qc/decontaminate.rules"
 
 
 # ---- Assembly rules

@@ -9,12 +9,12 @@ from sunbeamlib import reports
 
 
 ### HMP dataset merge data together
-with open("/mnt/chunyu20TB/HMP1/hmp_runs.txt") as f:
-    RUNs = f.read().splitlines()
+#with open("/mnt/chunyu20TB/hmp/hmp_runs.txt") as f:
+#    RUNs = f.read().splitlines()
 
-rule _all_cat:
-    input:
-        expand(str(Cfg['all']['output_fp']/'dnabc'/'{run}_{rp}.fastq.gz'), run=RUNs, rp=['1','2'])
+#rule _all_cat:
+#    input:
+#        expand(str(Cfg['all']['output_fp']/'dnabc'/'{run}_{rp}.fastq.gz'), run=RUNs, rp=['1','2'])
 
 rule cat_fastq:
     input:
@@ -220,7 +220,9 @@ rule remove_low_complexity:
 
 rule qc_final:
     input:
-        str(QC_FP/'03_komplexity'/'{sample}_{rp}.fastq.gz')
+        #str(QC_FP/'03_komplexity'/'{sample}_{rp}.fastq.gz')
+	# BWA (0825): unpaired reads error
+        str(QC_FP/'02_trimmomatic'/'{sample}_{rp}.fastq.gz')
     output:
         str(QC_FP/'cleaned'/'{sample}_{rp}.fastq.gz')
     shell:

@@ -26,7 +26,7 @@ rule _all_coverage:
 rule contigs_mapping:
     input:
         contig = str(ASSEMBLY_FP/'contigs'/'{sample}-contigs.fa'),
-        reads = expand(str(QC_FP/'decontam'/'{{sample}}_{rp}.fastq.gz'),rp = Pairs)
+        reads = expand(str(QC_FP/'cleaned'/'{{sample}}_{rp}.fastq.gz'),rp = Pairs)
     output:
         bam = str(ASSEMBLY_FP/'contigs'/'minimap2'/'{sample}.sorted.bam'),
         bai = str(ASSEMBLY_FP/'contigs'/'minimap2'/'{sample}.sorted.bam.bai')
