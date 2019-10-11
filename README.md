@@ -129,7 +129,9 @@ snakemake sunbeam_config.yml _all_ps_gp_plot --cores 48
 ### Across samples core SNPs for pileup
 
 ```bash
-for sample in `cat hmp_all.txt`; do for x in {0..47}; do echo banded/${sample%.pileup}.pileup.dp2.gcb10.band${x}.tsv >> banded/band${x}.txt; done; done
+for sample in `cat hmp_all.txt`; do for x in {0..47}; do 
+  echo banded/${sample%.pileup}.pileup.dp2.gcb10.band${x}.tsv >> banded/band${x}.txt; done; 
+done
 
 
 for i in {0..47}; do echo band${i}.txt; $HOME/xsnp/scripts/go2.py "banded/band${i}".txt; done
@@ -140,9 +142,24 @@ for i in {0..47}; do echo band${i}.txt; $HOME/xsnp/scripts/go2.py "banded/band${
 ```bash
 $HOME/xsnp-gtpro/scripts/go.py hmp_all.txt
 
-for sample in `cat hmp_all.txt`; do for x in {0..47}; do echo banded/${sample%_1.tsv}.gtpro.dp2.gcb10.band${x}.tsv >> banded/band${x}.txt; done; done
+for sample in `cat hmp_all.txt`; do for x in {0..47}; do 
+  echo banded/${sample%_1.tsv}.gtpro.dp2.gcb10.band${x}.tsv >> banded/band${x}.txt; done; 
+done
 
 for i in {0..47}; do echo band${i}.txt; $HOME/xsnp-gtpro/scripts/go2.py "banded/band${i}".txt; done
+```
+
+# Gtpro can detect low abundant species in the metagenomics samples
+
+Dataset: The 29 C. difficile genome sequences and their episomes were deposited at NCBI
+under PRJNA524299; metagenomic DNA sequence data is deposited under
+PRJNA562600. Metabolomic data and computer code used in this study are available
+at https://github.com/zhaoc1/nanoflow, https://github.com/zhaoc1/coreSNPs, and
+https://github.com/reny1/cdiff.
+
+```bash
+grabseqs sra -t 32 -m -o cdiff/ -r 3 PRJNA562600 -l
+sunbeam init cdiff --data_acc PRJNA562600
 ```
 
 
