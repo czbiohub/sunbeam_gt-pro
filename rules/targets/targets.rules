@@ -62,14 +62,19 @@ TARGET_REPORT = [
     str(ASSEMBLY_FP/'contigs_coverage.txt')
 ]
 
+TARGET_PILEUP = [expand(str(MAPPING_FP/'filtered'/'{genome}'/'{sample}.pileup'), genome=GenomeSegments.keys(), sample=Samples.keys())]
+
+TARGET_BLAST = [
+expand(str(ANNOTATION_FP/'{blast}'/'{db}'/'contigs'/'{sample}.tsv'), \
+        sample=Samples.keys(), db = ['nt_20190823'], blast = ['blastn']) ]
 
 # ---- All targets
 TARGET_ALL = (
     TARGET_QC +
-    TARGET_DECONTAM +
-    TARGET_CLASSIFY +
+    #TARGET_DECONTAM +
+    #TARGET_CLASSIFY +
     TARGET_ASSEMBLY +
-    TARGET_ANNOTATE +
-    TARGET_REPORT +
-    TARGET_MAPPING
+    TARGET_BLAST +
+    #TARGET_REPORT +
+    TARGET_PILEUP
 )

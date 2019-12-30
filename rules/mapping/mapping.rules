@@ -48,7 +48,7 @@ rule build_genome_index:
 rule align_to_genome_unpaired:
     input:
         lambda wildcards: bt2_index_files(wildcards.genome, Cfg['mapping']['genomes_fp']),
-        r1 = str(QC_FP/'cleaned'/'{sample}_R1.fastq.gz')
+        r1 = str(QC_FP/'cleaned'/'{sample}_1.fastq.gz')
     output:
         str(MAPPING_FP/'intermediates'/'{genome}'/'{sample}.sam')
     threads:

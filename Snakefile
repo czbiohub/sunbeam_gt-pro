@@ -54,10 +54,11 @@ for sbx in sbxs:
 # Setting up config files and samples
 Cfg = check_config(config)
 Blastdbs = process_databases(Cfg['blastdbs'])
-print(Blastdbs)
 
-#Samples = load_sample_list(Cfg['all']['samplelist_fp'], Cfg['all']['paired_end'], Cfg['all']['download_reads'], Cfg["all"]['root']/Cfg['all']['output_fp'])
-Samples = cz_load_sample_list(Cfg['all']['samplelist_fp'])
+print(Cfg['all']['download_reads'])
+Samples = load_sample_list(Cfg['all']['samplelist_fp'], Cfg['all']['paired_end'], Cfg['all']['download_reads'], Cfg["all"]['root']/Cfg['all']['output_fp'])
+#Samples = cz_load_sample_list(Cfg['all']['samplelist_fp'])
+
 
 Pairs = ['1', '2'] if Cfg['all']['paired_end'] else ['1']
 

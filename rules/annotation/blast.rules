@@ -36,7 +36,8 @@ rule run_blastn:
         -num_threads {threads} \
         -evalue 1e-10 \
         -max_target_seqs 5000 \
-        -out {output}
+        -out {output} 
+        #-culling_limit 1
         """
 
 rule run_idseq_blastn:
@@ -78,13 +79,19 @@ rule run_online_blastn:
         -evalue 1e-10 \
         -max_target_seqs 5000 \
         -out {output} \
-        -culling_limit 10 -word_size 11 -reward 2 -penalty -3
+        -culling_limit 10 \
+        -word_size 11 -reward 2 -penalty -3
         """
 
 rule _all_blastx:
     input:
         expand(str(ANNOTATION_FP/'blastx'/'{db}'/'{step}'/'{sample}.tsv'),\
               sample=Samples.keys(), db = ['nr_20190916'], step=['contigs_idseq', 'prokka'])
+
+rule _all_diamond:
+    input:
+        expand(str(ANNOTATION_FP/'diamond'/'{step}'/'{sample}.m8'),\
+              sample=Samples.keys(), step=['contigs_idseq', 'prokka'])
 
 rule run_blastx:
     """Run BLASTx against a given database and write the results to XML."""
@@ -104,13 +111,31 @@ rule run_blastx:
         -outfmt '6 qseqid sseqid pident qlen slen length qcovs mismatch gapopen qstart qend sstart send evalue bitscore' \
         -num_threads {threads} \
         -evalue 1e-10 \
-        -max_target_seqs 5000 \
+        -max_target_seqs 500 \
         -out {output}
         """
 
-rule _all_prokka:
+rule run_diamond:
     input:
-        expand(str(ANNOTATION_FP/'prokka'/'{sample}'/'{sample}.ffn'), sample=Samples.keys())
+        contigs = str(ASSEMBLY_FP/'contigs_idseq'/'{sample}-contigs.fa')
+    output:
+        str(ANNOTATION_FP/'diamond'/'contigs_idseq'/'{sample}.m8')
+    params:
+        db = "/mnt/chunyu20TB/chunyu-idseq-benchmark/dbs/nr_diamond/nr_diamond_20190918.dmnd"
+        #db=lambda wildcard: Blastdbs['prot'][wildcard.db]
+    threads:
+        Cfg['blast']['threads']
+    shell:
+        """
+        diamond blastx \
+        --query {input.contigs} \
+        --db {params.db} \
+        --outfmt 6 qseqid sseqid pident nident qlen slen length qcovhsp mismatch gapopen qstart qend sstart send evalue bitscore \
+        --threads {threads} \
+        --evalue 1e-10 \
+        --max-target-seqs 500 \
+        --out {output}
+        """
 
 rule run_prokka:
     input:
@@ -128,12 +153,39 @@ rule run_prokka:
         --locustag {params.prefix} --centre X --compliant --force {input.contigs}
         """
 
+rule _all_blastn_orfs:
+    input:
+        expand(str(ANNOTATION_FP/'{blast}'/'{db}'/'prokka'/'{sample}.blastn'), \
+	        sample=Samples.keys(), db = ['nt_20190823'], blast = ['blastn'])
+
+rule run_blastn_orfs:
+    """Run BLASTn on genes against a target db and write to TSV."""
+    input:
+        orfs = str(ANNOTATION_FP/'prokka'/'{sample}'/'{sample}.ffn')
+    output:
+        str(ANNOTATION_FP/'blastn'/'{db}'/'prokka'/'{sample}.blastn')
+    threads:
+        Cfg['blast']['threads']
+    params:
+        db=lambda wildcard: Blastdbs['nucl'][wildcard.db]
+    shell:
+       """
+        blastn \
+        -query {input.orfs} \
+        -db {params.db} \
+        -outfmt '6 qseqid sseqid pident qlen slen length qcovs mismatch gapopen qstart qend sstart send evalue bitscore' \
+        -num_threads {threads} \
+        -evalue 1e-10 \
+        -max_target_seqs 5000 \
+        -out {output}
+        """
+	
 rule run_blastx_orfs:
     """Run BLASTx on untranslated genes against a target db and write to TSV."""
     input:
         orfs = str(ANNOTATION_FP/'prokka'/'{sample}'/'{sample}.ffn')
     output:
-        str(ANNOTATION_FP/'blastx'/'{db}'/'prokka'/'{sample}.tsv')
+        str(ANNOTATION_FP/'blastx'/'prokka'/'{sample}.tsv')
     threads:
         Cfg['blast']['threads']
     params:
@@ -148,6 +200,29 @@ rule run_blastx_orfs:
         -evalue 1e-10 \
         -max_target_seqs 5000 \
         -out {output}
+        """
+
+rule run_diamond_orfs:
+    """Run BLASTx on untranslated genes against a target db and write to TSV."""
+    input:
+        orfs = str(ANNOTATION_FP/'prokka'/'{sample}'/'{sample}.ffn')
+    output:
+        str(ANNOTATION_FP/'diamond'/'prokka'/'{sample}.m8')
+    threads:
+        Cfg['blast']['threads']
+    params:
+        db = "/mnt/chunyu20TB/chunyu-idseq-benchmark/dbs/nr_diamond/nr_diamond_20190918.dmnd"
+        #db=lambda wildcard: Blastdbs['prot'][wildcard.db]
+    shell:
+        """
+        diamond blastx \
+        --query {input.orfs} \
+        --db {params.db} \
+        --outfmt 6 qseqid sseqid pident nident qlen slen length qcovhsp mismatch gapopen qstart qend sstart send evalue bitscore \
+        --threads {threads} \
+        --evalue 1e-10 \
+        --max-target-seqs 500 \
+        --out {output}
         """
 
 rule blast_report:
