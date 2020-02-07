@@ -101,7 +101,6 @@ def keep_read(aln):
     min_aln_cov = 0.75
     align_len = len(aln.query_alignment_sequence)
     query_len = aln.query_length
-
     # min pid filter
     if 100*(align_len-dict(aln.tags)['NM'])/float(align_len) < min_mapid:
         return False
